@@ -1,0 +1,67 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  assemble-apk:
+    name: Compile Debug APK in Cloud
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Configure Pre-installed Android SDK & Accept Licenses
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | sort -V | tail -n 1)
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+          cache-disabled: true
+
+      - name: Verify AndroidManifest.xml & Compile APK
+        run: |
+          if [ -f "app/src/main/AndroidManifest.xml" ]; then
+            PROJECT_DIR="."
+          else
+            MANIFEST_PATH=$(find . -path "*/app/src/main/AndroidManifest.xml" | head -n 1)
+            if [ -z "$MANIFEST_PATH" ]; then
+              echo "Error: app/src/main/AndroidManifest.xml not found in repository!"
+              exit 1
+            fi
+            PROJECT_DIR=$(dirname $(dirname $(dirname $(dirname "$MANIFEST_PATH"))))
+          fi
+          echo "Building Android project in directory: $PROJECT_DIR"
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload Compiled Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SunAnalemma-Debug-APK
+          path: "**/app/build/outputs/apk/debug/*.apk"
+          if-no-files-found: error
+          retention-days: 30
